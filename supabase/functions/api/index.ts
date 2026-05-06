@@ -257,20 +257,21 @@ serve(async (req) => {
           }
         }
 
-        // 2. Send reply via Unipile API
+        // 2. Send reply via Unipile API (MUST use multipart/form-data per Unipile docs)
         if (unipileDsn && unipileApiKey) {
-          // Send message back to the WhatsApp chat via Unipile
-          await fetch(`https://${unipileDsn}/api/v1/chats/${chatId}/messages`, {
+          const formData = new FormData();
+          formData.append('text', aiResponse);
+
+          const sendResp = await fetch(`https://${unipileDsn}/api/v1/chats/${chatId}/messages`, {
             method: 'POST',
             headers: {
               'X-API-KEY': unipileApiKey,
-              'Content-Type': 'application/json',
               'Accept': 'application/json'
             },
-            body: JSON.stringify({
-              text: aiResponse
-            })
+            body: formData
           })
+          const sendResult = await sendResp.text();
+          console.log(`Unipile send status: ${sendResp.status}, body: ${sendResult}`);
         }
       }
 
