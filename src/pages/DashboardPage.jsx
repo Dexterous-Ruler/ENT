@@ -87,7 +87,7 @@ export default function DashboardPage() {
           <h1 className="dashboard-title">{t('dashboard.welcome')}</h1>
           <p className="dashboard-number sans-header">
             <Phone size={14} />
-            +91 98765 00123
+            +91 95083 09957
           </p>
         </div>
 

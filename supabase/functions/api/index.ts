@@ -185,28 +185,75 @@ serve(async (req) => {
       const accountId = body.account_id;
 
       if (text && chatId && accountId) {
-        // 1. Call OpenAI API
+        // 1. Prepare OpenAI Messages with Conversation History
         const openAiKey = Deno.env.get('OPENAI_API_KEY')
+        const unipileDsn = Deno.env.get('UNIPILE_DSN')
+        const unipileApiKey = Deno.env.get('UNIPILE_API_KEY')
+
         let aiResponse = "Hello! I am your automated AI assistant."
+        let openAiMessages = [
+          { role: "system", content: "You are the advanced AI business assistant for Sarvam DeployBridge. You answer customer questions accurately, politely, and perfectly. You understand multiple Indian languages and always respond in the language the customer used. If asked about prices, services, or availability, provide helpful, realistic information. Maintain context of the conversation. Keep responses concise, warm, and human-like." }
+        ];
+
+        if (unipileDsn && unipileApiKey) {
+          try {
+            // Fetch recent chat history to give the AI context for follow-up questions
+            const historyReq = await fetch(`https://${unipileDsn}/api/v1/chats/${chatId}/messages`, {
+              headers: {
+                'X-API-KEY': unipileApiKey,
+                'Accept': 'application/json'
+              }
+            });
+            
+            if (historyReq.ok) {
+              const historyData = await historyReq.json();
+              const msgs = Array.isArray(historyData) ? historyData : (historyData.items || historyData.data || []);
+              
+              // Unipile returns most recent first. We take the last 6 messages and reverse for chronological order
+              const recentMsgs = msgs.slice(0, 6).reverse();
+              
+              recentMsgs.forEach((m: any) => {
+                const msgText = m.text || m.message || "";
+                if (!msgText) return;
+                
+                // Compare sender to our connected account ID to know if it's the AI or the user
+                const isFromUs = m.sender_id === userId || m.sender?.attendee_provider_id === userId;
+                openAiMessages.push({
+                  role: isFromUs ? "assistant" : "user",
+                  content: msgText
+                });
+              });
+            }
+          } catch (e) {
+            console.error("Error fetching history:", e);
+          }
+        }
+
+        // Ensure the current message is included if it wasn't caught in the history fetch
+        const hasCurrentMessage = openAiMessages.some((m: any) => m.content === text);
+        if (!hasCurrentMessage && text) {
+          openAiMessages.push({ role: "user", content: text });
+        }
         
         if (openAiKey) {
-          const aiReq = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${openAiKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: "gpt-3.5-turbo",
-              messages: [
-                { role: "system", content: "You are a helpful business assistant for an Indian local business. You understand multiple Indian languages. Respond politely in the language the user writes in (Hindi, Tamil, English, etc). Keep responses very concise." },
-                { role: "user", content: text }
-              ]
+          try {
+            const aiReq = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${openAiKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: "gpt-3.5-turbo",
+                messages: openAiMessages
+              })
             })
-          })
-          const aiData = await aiReq.json()
-          if (aiData.choices && aiData.choices.length > 0) {
-            aiResponse = aiData.choices[0].message.content
+            const aiData = await aiReq.json()
+            if (aiData.choices && aiData.choices.length > 0) {
+              aiResponse = aiData.choices[0].message.content
+            }
+          } catch (e) {
+            console.error("OpenAI Error:", e);
           }
         }
 
