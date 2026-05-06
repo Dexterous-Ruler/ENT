@@ -169,26 +169,46 @@ serve(async (req) => {
         })
       }
 
-      // Prevent infinite loops: don't reply to our own messages
-      const userId = body.account_info?.user_id;
-      const senderId = body.sender?.attendee_provider_id;
-      if (userId && senderId && userId === senderId) {
-        return new Response(JSON.stringify({ success: true, status: 'ignored_own_message' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200,
-        })
-      }
-      
+      // Read secrets early — needed for loop detection AND sending
+      const unipileDsn = Deno.env.get('UNIPILE_DSN')
+      const unipileApiKey = Deno.env.get('UNIPILE_API_KEY')
+
       // Extract data from Unipile webhook payload
       const text = body.message || '';
       const chatId = body.chat_id;
       const accountId = body.account_id;
 
+      // ── Bulletproof infinite-loop prevention ──────────────────────
+      // WhatsApp uses different ID formats (phone number vs LID),
+      // so comparing account_info.user_id with sender.attendee_provider_id
+      // does NOT work. Instead we ask Unipile for the latest message in
+      // the chat and check is_sender (1 = we sent it, 0 = customer sent it).
+      if (chatId && unipileDsn && unipileApiKey) {
+        try {
+          const latestResp = await fetch(
+            `https://${unipileDsn}/api/v1/chats/${chatId}/messages?limit=1`,
+            { headers: { 'X-API-KEY': unipileApiKey, 'Accept': 'application/json' } }
+          );
+          if (latestResp.ok) {
+            const latestData = await latestResp.json();
+            const latestMsg = latestData?.items?.[0];
+            if (latestMsg && latestMsg.is_sender === 1) {
+              console.log('Skipping: latest message was sent by us (is_sender=1)');
+              return new Response(JSON.stringify({ success: true, status: 'ignored_own_message' }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                status: 200,
+              })
+            }
+          }
+        } catch (e) {
+          console.error('Loop-detection fetch failed:', e);
+        }
+      }
+      // ─────────────────────────────────────────────────────────────
+
       if (text && chatId && accountId) {
         // 1. Prepare OpenAI Messages with Conversation History
         const openAiKey = Deno.env.get('OPENAI_API_KEY')
-        const unipileDsn = Deno.env.get('UNIPILE_DSN')
-        const unipileApiKey = Deno.env.get('UNIPILE_API_KEY')
 
         let aiResponse = "Hello! I am your automated AI assistant."
         let openAiMessages = [
@@ -217,7 +237,7 @@ serve(async (req) => {
                 if (!msgText) return;
                 
                 // Compare sender to our connected account ID to know if it's the AI or the user
-                const isFromUs = m.sender_id === userId || m.sender?.attendee_provider_id === userId;
+                const isFromUs = m.is_sender === 1;
                 openAiMessages.push({
                   role: isFromUs ? "assistant" : "user",
                   content: msgText
