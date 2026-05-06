@@ -258,9 +258,6 @@ serve(async (req) => {
         }
 
         // 2. Send reply via Unipile API
-        const unipileDsn = Deno.env.get('UNIPILE_DSN')
-        const unipileApiKey = Deno.env.get('UNIPILE_API_KEY')
-        
         if (unipileDsn && unipileApiKey) {
           // Send message back to the WhatsApp chat via Unipile
           await fetch(`https://${unipileDsn}/api/v1/chats/${chatId}/messages`, {
